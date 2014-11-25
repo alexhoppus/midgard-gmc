@@ -70,6 +70,8 @@ static int exynos_cpu_powerup(unsigned int cpu, unsigned int cluster)
 		cluster >= EXYNOS5420_NR_CLUSTERS)
 		return -EINVAL;
 
+	pmu_raw_writel(0x1, S5P_PMU_SPARE2);
+
 	exynos_cpu_power_up(cpunr);
 	return 0;
 }
