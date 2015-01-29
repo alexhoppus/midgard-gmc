@@ -363,6 +363,17 @@ static int max77843_muic_adc_gnd_handler(struct max77843_muic_info *info)
 			return ret;
 
 		extcon_set_cable_state(info->edev, "USB-HOST", attached);
+
+#ifdef CONFIG_CHARGER_MAX77843
+		/* FIXME: OTG calbe needs VBUS coltage */
+		if (attached) {
+			regmap_write(info->max77843->regmap_chg,
+			MAX77843_CHG_REG_CHG_CNFG_00, 0x2A);
+		} else {
+			regmap_write(info->max77843->regmap_chg,
+			MAX77843_CHG_REG_CHG_CNFG_00, 0x4);
+		}
+#endif
 		break;
 	case MAX77843_MUIC_GND_MHL_VB:
 	case MAX77843_MUIC_GND_MHL:
@@ -377,6 +388,7 @@ static int max77843_muic_adc_gnd_handler(struct max77843_muic_info *info)
 			attached ? "attached" : "detached", gnd_cable_type);
 		return -EINVAL;
 	}
+
 
 	return 0;
 }
