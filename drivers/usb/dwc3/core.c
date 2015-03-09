@@ -1018,12 +1018,11 @@ static int dwc3_suspend(struct device *dev)
 	case USB_DR_MODE_PERIPHERAL:
 	case USB_DR_MODE_OTG:
 		dwc3_gadget_suspend(dwc);
-		/* FALLTHROUGH */
-	case USB_DR_MODE_HOST:
 	default:
-		dwc3_event_buffers_cleanup(dwc);
 		break;
 	}
+
+	dwc3_event_buffers_cleanup(dwc);
 
 	dwc->gctl = dwc3_readl(dwc->regs, DWC3_GCTL);
 	spin_unlock_irqrestore(&dwc->lock, flags);
@@ -1061,10 +1060,7 @@ static int dwc3_resume(struct device *dev)
 	case USB_DR_MODE_PERIPHERAL:
 	case USB_DR_MODE_OTG:
 		dwc3_gadget_resume(dwc);
-		/* FALLTHROUGH */
-	case USB_DR_MODE_HOST:
 	default:
-		/* do nothing */
 		break;
 	}
 
