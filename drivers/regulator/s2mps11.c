@@ -34,6 +34,12 @@
 #include <linux/mfd/samsung/s2mps14.h>
 #include <linux/mfd/samsung/s2mpu02.h>
 
+struct s2mps11_regdump {
+	unsigned int *regs;
+	unsigned int *val;
+	unsigned int nr_regs;
+};
+
 struct s2mps11_info {
 	unsigned int rdev_num;
 	int ramp_delay2;
@@ -53,6 +59,8 @@ struct s2mps11_info {
 
 	/* Array of size rdev_num with GPIO-s for external sleep control */
 	int *ext_control_gpio;
+
+	struct s2mps11_regdump regdump;
 };
 
 static int get_ramp_delay(int ramp_delay)
@@ -490,6 +498,17 @@ static const struct regulator_desc s2mps13_regulators[] = {
 	regulator_desc_s2mps13_buck8_10(8,  MIN_1000_MV, STEP_12_5_MV, 0x20),
 	regulator_desc_s2mps13_buck8_10(9,  MIN_1000_MV, STEP_12_5_MV, 0x20),
 	regulator_desc_s2mps13_buck8_10(10, MIN_500_MV,  STEP_6_25_MV, 0x10),
+};
+
+/* FIXME:
+ * BUCK2, BUCK3's voltage is used to APs(A53, A57) power and it will be
+ * lost after suspend. Until applying dynamic voltage control is completed,
+ * manual restoring of them is required.
+ */
+
+static unsigned int s2mps13_regdump_regs[] = {
+	S2MPS13_REG_B2OUT,
+	S2MPS13_REG_B3OUT,
 };
 
 static int s2mps14_regulator_enable(struct regulator_dev *rdev)
@@ -963,6 +982,13 @@ static int s2mps11_pmic_probe(struct platform_device *pdev)
 	case S2MPS13X:
 		s2mps11->rdev_num = ARRAY_SIZE(s2mps13_regulators);
 		regulators = s2mps13_regulators;
+
+		s2mps11->regdump.nr_regs = ARRAY_SIZE(s2mps13_regdump_regs);
+		s2mps11->regdump.regs = s2mps13_regdump_regs;
+		s2mps11->regdump.val = devm_kzalloc(&pdev->dev,
+					sizeof(unsigned int) *
+					ARRAY_SIZE(s2mps13_regdump_regs),
+					GFP_KERNEL);
 		break;
 	case S2MPS14X:
 		s2mps11->rdev_num = ARRAY_SIZE(s2mps14_regulators);
@@ -1068,9 +1094,39 @@ static const struct platform_device_id s2mps11_pmic_id[] = {
 };
 MODULE_DEVICE_TABLE(platform, s2mps11_pmic_id);
 
+static int s2mps11_pmic_suspend(struct device *dev)
+{
+	struct sec_pmic_dev *iodev = dev_get_drvdata(dev->parent);
+	struct s2mps11_info *s2mps11 = dev_get_drvdata(dev);
+	struct s2mps11_regdump *regdump = &s2mps11->regdump;
+	int i;
+
+	for (i = 0; i < regdump->nr_regs; i++)
+		regmap_read(iodev->regmap_pmic,
+				regdump->regs[i], &regdump->val[i]);
+
+	return 0;
+}
+static int s2mps11_pmic_resume(struct device *dev)
+{
+	struct sec_pmic_dev *iodev = dev_get_drvdata(dev->parent);
+	struct s2mps11_info *s2mps11 = dev_get_drvdata(dev);
+	struct s2mps11_regdump *regdump = &s2mps11->regdump;
+	int i;
+
+	for (i = 0; i < regdump->nr_regs; i++)
+		regmap_write(iodev->regmap_pmic,
+				regdump->regs[i], regdump->val[i]);
+
+	return 0;
+}
+
+SIMPLE_DEV_PM_OPS(s2mps11_pm_ops, s2mps11_pmic_suspend, s2mps11_pmic_resume);
+
 static struct platform_driver s2mps11_pmic_driver = {
 	.driver = {
 		.name = "s2mps11-pmic",
+		.pm = &s2mps11_pm_ops,
 	},
 	.probe = s2mps11_pmic_probe,
 	.id_table = s2mps11_pmic_id,
