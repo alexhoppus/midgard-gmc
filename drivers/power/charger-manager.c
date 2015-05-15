@@ -933,6 +933,11 @@ static int charger_extcon_init(struct charger_manager *cm,
 		ret = -EINVAL;
 	}
 
+	cable->attached = extcon_get_cable_state(cable->extcon_dev.edev,
+								cable->name);
+	if (cable->attached)
+		schedule_work(&cable->wq);
+
 	return ret;
 }
 
