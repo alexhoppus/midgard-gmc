@@ -1648,7 +1648,7 @@ static int exynos_dsi_create_connector(struct exynos_drm_display *display,
 
 	ret = drm_connector_init(encoder->dev, connector,
 				 &exynos_dsi_connector_funcs,
-				 DRM_MODE_CONNECTOR_DSI);
+				 DRM_MODE_CONNECTOR_LVDS);
 	if (ret) {
 		DRM_ERROR("Failed to initialize connector with drm\n");
 		return ret;
