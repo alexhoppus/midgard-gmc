@@ -23,7 +23,6 @@
 #include <linux/sysrq.h>
 #include <linux/init.h>
 #include <linux/nmi.h>
-#include <linux/exynos-ss.h>
 
 #define PANIC_TIMER_STEP 100
 #define PANIC_BLINK_SPD 18
@@ -135,10 +134,6 @@ void panic(const char *fmt, ...)
 	atomic_notifier_call_chain(&panic_notifier_list, 0, buf);
 
 	kmsg_dump(KMSG_DUMP_PANIC);
-	/*
-	 * Workaround: Dump snapshot for specific soc
-	 */
-	exynos_ss_post_panic();
 
 	/*
 	 * If you doubt kdump always works fine in any situation,
@@ -170,10 +165,6 @@ void panic(const char *fmt, ...)
 			mdelay(PANIC_TIMER_STEP);
 		}
 	}
-	/*
-	 * Workaround: set upload mode with cause
-	 */
-	exynos_ss_set_upload();
 	if (panic_timeout != 0) {
 		/*
 		 * This will not be a clean reboot, with everything

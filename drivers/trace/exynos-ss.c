@@ -135,6 +135,10 @@ static void sec_debug_set_upload_magic(unsigned magic, char *str)
 	//	outer_flush_all();
 }
 
+/*
+ * Workaround: set upload mode with cause
+ * originate from sec_debug.c
+ */
 void exynos_ss_set_upload(void)
 {
 	sec_debug_set_upload_magic(0x66262564, "panic");
@@ -1116,6 +1120,15 @@ static int exynos_ss_panic_handler(struct notifier_block *nb,
 	exynos_ss_dump_task_info();
 	flush_cache_all();
 #endif
+#else
+	/*
+	 * Workaround: Dump snapshot for specific soc
+	 */
+	exynos_ss_post_panic();
+	/*
+	 * Workaround: set upload mode with cause
+	 */
+	exynos_ss_set_upload();
 #endif
 	return 0;
 }
