@@ -29,6 +29,7 @@
 #include <mali_kbase.h>
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
+#include <linux/sched.h>
 
 /**
  * @brief Initialize gpu_memory debugfs entry
