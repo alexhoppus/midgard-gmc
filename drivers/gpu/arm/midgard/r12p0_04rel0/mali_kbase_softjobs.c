@@ -193,13 +193,12 @@ static int kbase_dump_cpu_gpu_time(struct kbase_jd_atom *katom)
 	    reg->cpu_alloc && reg->cpu_alloc->pages)
 		addr = reg->cpu_alloc->pages[pfn - reg->start_pfn];
 
-	kbase_gpu_vm_unlock(kctx);
 	if (!addr)
-		return 0;
+		goto out;
 
 	page = kmap(pfn_to_page(PFN_DOWN(addr)));
 	if (!page)
-		return 0;
+		goto out;
 
 	kbase_sync_single_for_cpu(katom->kctx->kbdev,
 			kbase_dma_addr(pfn_to_page(PFN_DOWN(addr))) +
@@ -217,7 +216,8 @@ static int kbase_dump_cpu_gpu_time(struct kbase_jd_atom *katom)
 
 	/* Atom was fine - mark it as done */
 	katom->event_code = BASE_JD_EVENT_DONE;
-
+out:
+	kbase_gpu_vm_unlock(kctx);
 	return 0;
 }
 
