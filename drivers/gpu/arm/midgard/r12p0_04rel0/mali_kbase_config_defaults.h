@@ -190,12 +190,21 @@ enum {
  * This defines the time-slice for a job (which may be different from that of a
  * context)
  */
+#if MALI_GMC
+#define DEFAULT_JS_SOFT_STOP_TICKS      (10)
+#else
 #define DEFAULT_JS_SOFT_STOP_TICKS       (1) /* 100ms-200ms */
+#endif
 
 /*
  * Default minimum number of scheduling ticks before CL jobs are soft-stopped.
  */
+
+#if MALI_GMC
+#define DEFAULT_JS_SOFT_STOP_TICKS_CL    (10)
+#else
 #define DEFAULT_JS_SOFT_STOP_TICKS_CL    (1) /* 100ms-200ms */
+#endif
 
 /*
  * Default minimum number of scheduling ticks before jobs are hard-stopped
@@ -206,7 +215,11 @@ enum {
 /*
  * Default minimum number of scheduling ticks before CL jobs are hard-stopped.
  */
+#if MALI_GMC
+#define DEFAULT_JS_HARD_STOP_TICKS_CL    (100)
+#else
 #define DEFAULT_JS_HARD_STOP_TICKS_CL    (50) /* 5s */
+#endif
 
 /*
  * Default minimum number of scheduling ticks before jobs are hard-stopped
