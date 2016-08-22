@@ -1836,6 +1836,11 @@ static int kbase_cpu_vm_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 	if (map->alloc->reg && (map->alloc->reg->flags & KBASE_REG_DONT_NEED))
 		goto locked_bad_fault;
 
+	/* TODO: maybe, do not insert all valid pages, but map->count? */
+	kbase_get_compressed_alloc(map->alloc, map->page_off + rel_pgoff,
+		MIN((vma->vm_end - vma->vm_start) >> PAGE_SHIFT, map->alloc->nents
+		- map->page_off) - rel_pgoff);
+
 	/* insert all valid pages from the fault location */
 	for (i = rel_pgoff;
 	     i < MIN((vma->vm_end - vma->vm_start) >> PAGE_SHIFT,
@@ -1900,6 +1905,7 @@ static int kbase_cpu_mmap(struct kbase_va_region *reg, struct vm_area_struct *vm
 	vma->vm_private_data = map;
 
 	page_array = kbase_get_cpu_phy_pages(reg);
+	kbase_get_compressed_region(reg, vma->vm_pgoff, nr_pages);
 
 	if (!(reg->flags & KBASE_REG_CPU_CACHED) &&
 	    (reg->flags & (KBASE_REG_CPU_WR|KBASE_REG_CPU_RD))) {
@@ -2462,6 +2468,7 @@ void *kbase_vmap(struct kbase_context *kctx, u64 gpu_addr, size_t size,
 	if (!pages)
 		goto out_unlock;
 
+	kbase_get_compressed_region(reg, (gpu_addr >> PAGE_SHIFT), page_count);
 	for (i = 0; i < page_count; i++)
 		pages[i] = pfn_to_page(PFN_DOWN(page_array[page_index + i]));
 

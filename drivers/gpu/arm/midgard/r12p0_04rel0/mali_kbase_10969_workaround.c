@@ -74,6 +74,7 @@ int kbasep_10969_workaround_clamp_coordinates(struct kbase_jd_atom *katom)
 
 	page_index = (katom->jc >> PAGE_SHIFT) - region->start_pfn;
 
+	kbase_get_compressed_region(region, region->start_pfn + page_index, 1);
 	p = pfn_to_page(PFN_DOWN(page_array[page_index]));
 
 	/* we need the first 10 words of the fragment shader job descriptor.
@@ -98,6 +99,7 @@ int kbasep_10969_workaround_clamp_coordinates(struct kbase_jd_atom *katom)
 	/* The data needed overflows page the dimension,
 	 * need to map the subsequent page */
 	if (copy_size < JOB_HEADER_SIZE) {
+		kbase_get_compressed_region(region, region->start_pfn + page_index + 1, 1);
 		p = pfn_to_page(PFN_DOWN(page_array[page_index + 1]));
 		page_2 = kmap_atomic(p);
 
@@ -181,6 +183,7 @@ int kbasep_10969_workaround_clamp_coordinates(struct kbase_jd_atom *katom)
 
 		/* Flush CPU cache to update memory for future GPU reads*/
 		memcpy(page_1, dst, copy_size);
+		kbase_get_compressed_region(region, region->start_pfn + page_index, 1);
 		p = pfn_to_page(PFN_DOWN(page_array[page_index]));
 
 		kbase_sync_single_for_device(katom->kctx->kbdev,
@@ -190,6 +193,7 @@ int kbasep_10969_workaround_clamp_coordinates(struct kbase_jd_atom *katom)
 		if (copy_size < JOB_HEADER_SIZE) {
 			memcpy(page_2, dst + copy_size,
 					JOB_HEADER_SIZE - copy_size);
+			kbase_get_compressed_region(region, region->start_pfn + page_index + 1, 1);
 			p = pfn_to_page(PFN_DOWN(page_array[page_index + 1]));
 
 			kbase_sync_single_for_device(katom->kctx->kbdev,

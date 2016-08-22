@@ -39,6 +39,7 @@
 #include <linux/mempool.h>
 #include <linux/slab.h>
 #include <linux/file.h>
+#include <linux/gmc.h>
 
 #ifdef CONFIG_MALI_FPGA_BUS_LOGGER
 #include <linux/bus_logger.h>
@@ -1133,6 +1134,9 @@ struct kbase_device {
 
 	/* list of inited sub systems. Used during terminate/error recovery */
 	u32 inited_subsys;
+#if MALI_GMC
+	struct gmc_device kbase_gmc_device;
+#endif
 };
 
 /* JSCTX ringbuffer size will always be a power of 2. The idx shift must be:

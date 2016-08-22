@@ -1082,6 +1082,8 @@ static int kbase_do_syncset(struct kbase_context *kctx,
 	page_count = (size + offset + (PAGE_SIZE - 1)) >> PAGE_SHIFT;
 	cpu_pa = kbase_get_cpu_phy_pages(reg);
 	gpu_pa = kbase_get_gpu_phy_pages(reg);
+	/* TODO: reg->cpu_alloc->nents  ->  page_count = (size + offset + (PAGE_SIZE - 1)) >> PAGE_SHIFT */
+	kbase_get_compressed_region(reg, reg->start_pfn, reg->cpu_alloc->nents);
 
 	/* Sync first page */
 	if (cpu_pa[page_off]) {
@@ -1375,7 +1377,7 @@ int kbase_free_phy_pages_helper(
 	start_free = alloc->pages + alloc->nents - nr_pages_to_free;
 
 	syncback = alloc->properties & KBASE_MEM_PHY_ALLOC_ACCESSED_CACHED;
-
+	kbase_gmc_invalidate_alloc(alloc->imported.kctx, start_free, nr_pages_to_free);
 	/*
 	 * Clear the zone cache, we don't expect JIT allocations to be
 	 * shrunk in parts so there is no point trying to optimize for that

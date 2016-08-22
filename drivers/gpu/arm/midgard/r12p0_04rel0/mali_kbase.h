@@ -61,6 +61,7 @@
 #include "mali_kbase_jm.h"
 #include "mali_kbase_vinstr.h"
 #include "mali_kbase_ipa.h"
+#include "mali_kbase_gmc.h"
 #ifdef CONFIG_GPU_TRACEPOINTS
 #include <trace/events/gpu.h>
 #endif

@@ -73,6 +73,8 @@ static struct page *kbasep_translate_gpu_addr_to_kernel_page(
 			kctx, gpu_addr);
 	if (!reg || (reg->flags & KBASE_REG_FREE))
 		goto err_vm_unlock;
+
+	kbase_get_compressed_region(reg, pfn, 1);
 	addr = reg->cpu_alloc->pages[pfn - reg->start_pfn];
 	kbase_gpu_vm_unlock(kctx);
 
@@ -190,8 +192,10 @@ static int kbase_dump_cpu_gpu_time(struct kbase_jd_atom *katom)
 	reg = kbase_region_tracker_find_region_enclosing_address(kctx, jc);
 	if (reg &&
 	    (reg->flags & KBASE_REG_GPU_WR) &&
-	    reg->cpu_alloc && reg->cpu_alloc->pages)
+	    reg->cpu_alloc && reg->cpu_alloc->pages) {
+		kbase_get_compressed_region(reg, pfn, 1);
 		addr = reg->cpu_alloc->pages[pfn - reg->start_pfn];
+	}
 
 	if (!addr)
 		goto out;

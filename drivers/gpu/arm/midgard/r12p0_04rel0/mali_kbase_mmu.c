@@ -85,6 +85,67 @@ static size_t make_multiple(size_t minimum, size_t multiple)
 	return minimum + multiple - remainder;
 }
 
+int kbase_gmc_handle_gpu_page_fault(struct kbase_as *faulting_as,
+	struct kbase_va_region *region)
+{
+	int pages_decompressed = 0, err = 0;
+	u32 op;
+	/* We may map 8 pages (or more) because of in case of large
+	 * textures other page faults are expected, it will
+	 * seed up mapping pages back on gpu.
+	 * Or may use other heuristics (also) */
+	u64 fault_block_pfn, fault_rel_pfn;
+	size_t map_block_size;
+	struct kbase_context *kctx = region->kctx;
+	struct kbase_device *kbdev = kctx->kbdev;
+	fault_rel_pfn = (faulting_as->fault_addr >> PAGE_SHIFT) - region->start_pfn;
+	fault_block_pfn = fault_rel_pfn & (~(u64)PAGE_FAULT_MAP_BLOCK_MASK);
+	map_block_size = MIN(PAGE_FAULT_MAP_BLOCK, region->cpu_alloc->nents - fault_block_pfn);
+
+	/* Out of bounds access, possibly growable region. Skip this. */
+	if (fault_rel_pfn >= kbase_reg_current_backed_size(region))
+		return GMC_PF_OUT_OF_BOUNDS;
+
+	mutex_lock(&faulting_as->transaction_mutex);
+
+	pages_decompressed = kbase_get_compressed_region(region, region->start_pfn +
+		fault_block_pfn, map_block_size);
+	if (IS_ERR_VALUE(pages_decompressed))
+		err = pages_decompressed;
+
+	/* insert gpu mappings */
+	kbase_mmu_insert_pages(region->kctx, region->start_pfn + fault_block_pfn,
+		&region->cpu_alloc->pages[fault_block_pfn], map_block_size, region->flags);
+
+	/* flush L2 and unlock the VA (resumes the MMU) */
+	if (kbase_hw_has_issue(kbdev, BASE_HW_ISSUE_6367))
+		op = AS_COMMAND_FLUSH;
+	else
+		op = AS_COMMAND_FLUSH_PT;
+
+	kbase_mmu_hw_clear_fault(kbdev, faulting_as, kctx,
+			KBASE_MMU_FAULT_TYPE_PAGE);
+	kbase_mmu_hw_do_operation(kbdev, faulting_as, kctx,
+			region->start_pfn + fault_block_pfn,
+			map_block_size, op, 1);
+	/* [1] in case another page fault occurred while we were
+	 * handling the (duplicate) page fault we need to ensure we
+	 * don't loose the other page fault as result of us clearing
+	 * the MMU IRQ. Therefore, after we clear the MMU IRQ we send
+	 * an UNLOCK command that will retry any stalled memory
+	 * transaction (which should cause the other page fault to be
+	 * raised again).
+	 */
+	kbase_mmu_hw_do_operation(kbdev, faulting_as, NULL, 0, 0,
+				AS_COMMAND_UNLOCK, 1);
+	kbase_mmu_hw_enable_fault(kbdev, faulting_as, kctx,
+				KBASE_MMU_FAULT_TYPE_PAGE);
+
+	mutex_unlock(&faulting_as->transaction_mutex);
+	return err;
+}
+
+
 void page_fault_worker(struct work_struct *data)
 {
 	u64 fault_pfn;
@@ -170,6 +231,24 @@ void page_fault_worker(struct work_struct *data)
 		goto fault_done;
 	}
 
+	if ((region->flags & KBASE_REG_DONT_NEED)) {
+		kbase_gpu_vm_unlock(kctx);
+		kbase_mmu_report_fault_and_kill(kctx, faulting_as,
+				"Don't need memory can't be grown");
+		goto fault_done;
+	}
+
+	err = kbase_gmc_handle_gpu_page_fault(faulting_as, region);
+	if (!err) {
+		kbase_gpu_vm_unlock(kctx);
+		goto fault_done;
+	} else if (err != GMC_PF_OUT_OF_BOUNDS) {
+		kbase_gpu_vm_unlock(kctx);
+		kbase_mmu_report_fault_and_kill(kctx, faulting_as,
+				"GMC can't decompress pages");
+		goto fault_done;
+	}
+
 	if ((region->flags & GROWABLE_FLAGS_REQUIRED)
 			!= GROWABLE_FLAGS_REQUIRED) {
 		kbase_gpu_vm_unlock(kctx);
@@ -178,42 +257,10 @@ void page_fault_worker(struct work_struct *data)
 		goto fault_done;
 	}
 
-	if ((region->flags & KBASE_REG_DONT_NEED)) {
-		kbase_gpu_vm_unlock(kctx);
-		kbase_mmu_report_fault_and_kill(kctx, faulting_as,
-				"Don't need memory can't be grown");
-		goto fault_done;
-	}
-
 	/* find the size we need to grow it by */
 	/* we know the result fit in a size_t due to kbase_region_tracker_find_region_enclosing_address
 	 * validating the fault_adress to be within a size_t from the start_pfn */
 	fault_rel_pfn = fault_pfn - region->start_pfn;
-
-	if (fault_rel_pfn < kbase_reg_current_backed_size(region)) {
-		dev_dbg(kbdev->dev, "Page fault @ 0x%llx in allocated region 0x%llx-0x%llx of growable TMEM: Ignoring",
-				faulting_as->fault_addr, region->start_pfn,
-				region->start_pfn +
-				kbase_reg_current_backed_size(region));
-
-		kbase_mmu_hw_clear_fault(kbdev, faulting_as, kctx,
-				KBASE_MMU_FAULT_TYPE_PAGE);
-		/* [1] in case another page fault occurred while we were
-		 * handling the (duplicate) page fault we need to ensure we
-		 * don't loose the other page fault as result of us clearing
-		 * the MMU IRQ. Therefore, after we clear the MMU IRQ we send
-		 * an UNLOCK command that will retry any stalled memory
-		 * transaction (which should cause the other page fault to be
-		 * raised again).
-		 */
-		kbase_mmu_hw_do_operation(kbdev, faulting_as, NULL, 0, 0,
-				AS_COMMAND_UNLOCK, 1);
-		kbase_mmu_hw_enable_fault(kbdev, faulting_as, kctx,
-				KBASE_MMU_FAULT_TYPE_PAGE);
-		kbase_gpu_vm_unlock(kctx);
-
-		goto fault_done;
-	}
 
 	new_pages = make_multiple(fault_rel_pfn -
 			kbase_reg_current_backed_size(region) + 1,
@@ -698,8 +745,12 @@ int kbase_mmu_insert_pages(struct kbase_context *kctx, u64 vpfn,
 			unsigned int ofs = index + i;
 
 			KBASE_DEBUG_ASSERT(0 == (pgd_page[ofs] & 1UL));
-			kctx->kbdev->mmu_mode->entry_set_ate(&pgd_page[ofs],
+			if (kbase_is_entry_decompressed(phys[i])) {
+				kctx->kbdev->mmu_mode->entry_set_ate(&pgd_page[ofs],
 					phys[i], flags);
+			} else {
+				kctx->kbdev->mmu_mode->entry_invalidate(&pgd_page[ofs]);
+			}
 		}
 
 		phys += count;

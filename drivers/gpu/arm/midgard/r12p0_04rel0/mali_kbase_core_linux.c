@@ -93,11 +93,19 @@
 #endif
 
 #include <mali_kbase_tlstream.h>
+#include <mali_kbase_gmc.h>
 
 /* GPU IRQ Tags */
 #define	JOB_IRQ_TAG	0
 #define MMU_IRQ_TAG	1
 #define GPU_IRQ_TAG	2
+
+#if MALI_GMC
+struct gmc_ops kbase_gmc_ops = {
+	.compress_kctx = kbase_gmc_compress,
+	.decompress_kctx = kbase_gmc_decompress,
+};
+#endif
 
 #if MALI_UNIT_TEST
 static struct kbase_exported_test_data shared_kernel_test_data;
@@ -4016,6 +4024,13 @@ static int kbase_platform_device_probe(struct platform_device *pdev)
 
 	kbase_dev_nr++;
 
+#if MALI_GMC && defined(CONFIG_GPU_GMC_GENERIC)
+	err = gmc_register_device(&kbase_gmc_ops, &kbdev->kbase_gmc_device);
+	if (err) {
+		/* Failed to initialize GMC. */
+		dev_warn(kbdev->dev, "GMC initialization failed.\n");
+	}
+#endif
 	return err;
 }
 
