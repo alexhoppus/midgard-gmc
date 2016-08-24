@@ -8,10 +8,17 @@
 #include <linux/freezer.h>
 #include <linux/page-flags.h>
 #include <linux/kthread.h>
+#include <linux/wait.h>
 
 #if MALI_GMC
 
 #define pr_fmt(fmt) "kbase-gmc: " fmt
+
+static atomic_t n_gmc_workers = ATOMIC_INIT(0);
+static atomic_t overall_pages_handled = ATOMIC_INIT(0);
+static DECLARE_WAIT_QUEUE_HEAD(gmc_wait);
+
+#define GMC_WORKER_TIMEOUT_MS 10000
 
 /**
  * kbase_gmc_unlock_task - Unlock function, which unlocks mmap_sem and kbase_gpu_vm_lock
@@ -357,6 +364,7 @@ static int kbase_gmc_decompress_region(struct kbase_va_region *reg, u64 vpfn, si
 	return kbase_gmc_decompress_alloc(reg->cpu_alloc, vpfn - reg->start_pfn, nr);
 }
 
+
 /**
  * kbase_gmc_walk_region - Performs GMC specific action with region pages. This
  * walker function could, compress, decompress or count pages to be compressed.
@@ -405,6 +413,23 @@ static int kbase_gmc_walk_region(struct kbase_va_region *reg, enum kbase_gmc_op 
 }
 
 /**
+ * kbase_gmc_walk_region_work - Worker function for handling per-region workload.
+ *
+ * @work:      Work struct
+ *
+ * Return:     Nothing.
+ */
+void kbase_gmc_walk_region_work(struct work_struct *work)
+{
+	int pages_handled = 0;
+	struct kbase_va_region *reg = container_of(work, struct kbase_va_region, gmc_work);
+	pages_handled = kbase_gmc_walk_region(reg, reg->op);
+	atomic_dec(&n_gmc_workers);
+	wake_up_interruptible(&gmc_wait);
+	atomic_add(pages_handled, &overall_pages_handled);
+}
+
+/**
  * kbase_gmc_walk_kctx - Walk through not freed kctxs regions.
  *
  * @kctx:      Graphical context
@@ -421,14 +446,31 @@ static int kbase_gmc_walk_kctx(struct kbase_context *kctx, enum kbase_gmc_op op)
 	gmc_tsk.kctx = kctx;
 	gmc_tsk.task = NULL;
 
+	KBASE_DEBUG_ASSERT(!atomic_read(&n_gmc_workers));
+	atomic_set(&overall_pages_handled, 0);
+
 	if (kbase_gmc_trylock_task(&gmc_tsk, op))
 		return ret;
 
 	for_each_rb_node(&(kctx->reg_rbtree), node) {
 		reg = rb_entry(node, struct kbase_va_region, rblink);
-		if (!is_region_free(reg))
-			ret += kbase_gmc_walk_region(reg, op);
+		if (!is_region_free(reg)) {
+			reg->op = op;
+			atomic_inc(&n_gmc_workers);
+			queue_work(system_unbound_wq, &reg->gmc_work);
+		}
 	}
+	while (atomic_read(&n_gmc_workers) > 0) {
+		int err = wait_event_interruptible_timeout(gmc_wait,
+			!atomic_read(&n_gmc_workers),
+			msecs_to_jiffies(GMC_WORKER_TIMEOUT_MS));
+		if (err <= 0) {
+			pr_warn("Timeout while waiting GMC workers, \
+				compression takes more than %d sec\n",
+				GMC_WORKER_TIMEOUT_MS);
+		}
+	}
+	ret = atomic_read(&overall_pages_handled);
 	kbase_gmc_unlock_task(&gmc_tsk, op);
 	return ret;
 }

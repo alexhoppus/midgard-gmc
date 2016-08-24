@@ -22,6 +22,8 @@ struct kbase_gmc_tsk {
 	int trylock_status;
 };
 
+/* worker for doing parallel gmc operations */
+void kbase_gmc_walk_region_work(struct work_struct *work);
 /* bring back compressed pages and optionally map them back to gpu,
  * the region is given as input */
 int kbase_get_compressed_region(struct kbase_va_region *reg, u64 vpfn, size_t nr);

@@ -296,6 +296,10 @@ struct kbase_va_region {
 
 	/* List head used to store the region in the JIT allocation pool */
 	struct list_head jit_node;
+#if MALI_GMC
+	struct work_struct gmc_work;
+	int op;
+#endif
 };
 
 /* Common functions */

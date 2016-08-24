@@ -39,6 +39,7 @@
 #include <mali_kbase_gator.h>
 #include <mali_kbase_hwaccess_time.h>
 #include <mali_kbase_tlstream.h>
+#include <mali_kbase_gmc.h>
 
 /**
  * @brief Check the zone compatibility of two regions.
@@ -721,7 +722,9 @@ struct kbase_va_region *kbase_alloc_free_region(struct kbase_context *kctx, u64 
 
 	new_reg->start_pfn = start_pfn;
 	new_reg->nr_pages = nr_pages;
-
+#if MALI_GMC
+	INIT_WORK(&new_reg->gmc_work, kbase_gmc_walk_region_work);
+#endif
 	return new_reg;
 }
 
