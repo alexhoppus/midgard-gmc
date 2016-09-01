@@ -91,7 +91,7 @@ static int kbase_gmc_trylock_task(struct kbase_gmc_tsk *gmc_tsk, enum kbase_gmc_
 void kbase_gmc_dma_unmap_page(struct kbase_device *kbdev, struct page *page)
 {
 	dma_unmap_page(kbdev->dev, kbase_dma_addr(page),
-			PAGE_SIZE, DMA_BIDIRECTIONAL);
+			PAGE_SIZE, DMA_FROM_DEVICE);
 	lock_page(page);
 	ClearPagePrivate(page);
 	unlock_page(page);
@@ -101,7 +101,7 @@ dma_addr_t kbase_gmc_dma_map_page(struct kbase_device *kbdev, struct page *page)
 {
 	dma_addr_t dma_addr;
 	dma_addr = dma_map_page(kbdev->dev, page, 0, PAGE_SIZE,
-			DMA_BIDIRECTIONAL);
+			DMA_TO_DEVICE);
 	if (dma_mapping_error(kbdev->dev, dma_addr)) {
 		pr_alert("%s: dma_mapping_error!\n", __func__);
 		return (dma_addr_t)(0ULL);
@@ -151,7 +151,6 @@ int noinline kbase_gmc_page_decompress(phys_addr_t *p, struct kbase_device *kbde
 	}
 	dma_addr = kbase_gmc_dma_map_page(kbdev, page);
 	*p = page_to_phys(page);
-
 	BUG_ON(dma_addr != *p);
 	return 0;
 }
@@ -174,6 +173,8 @@ int noinline kbase_gmc_page_compress(phys_addr_t *p, struct kbase_device *kbdev)
 	if (!kbase_dma_addr(page))
 		return -EINVAL;
 
+	kbase_gmc_dma_unmap_page(kbdev, page);
+
 	handle = gmc_storage_put_page(kbdev->kbase_gmc_device.storage, page);
 	if (IS_ERR(handle)) {
 		if ((int) handle != -EFBIG) {
@@ -182,7 +183,6 @@ int noinline kbase_gmc_page_compress(phys_addr_t *p, struct kbase_device *kbdev)
 		}
 		return -EINVAL;
 	}
-	kbase_gmc_dma_unmap_page(kbdev, page);
 
 	*p = kbase_set_gmc_handle(handle);
 	put_page(page);
