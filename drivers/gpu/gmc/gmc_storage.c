@@ -103,11 +103,6 @@ static int is_page_zero_filled(struct page *page)
 	/* It is safe, because we don't do any sleepy stuff here. */
 	p = kmap_atomic(page);
 
-	/*
-	 * We have to flush the cache data before reading to be sure we read
-	 * an actual copy.
-	 */
-	__cpuc_flush_dcache_area(p, PAGE_SIZE);
 	ret = is_region_zero_filled(p);
 
 	kunmap_atomic(p);
@@ -136,11 +131,6 @@ static int compress_page(struct page *page, u8 *buff, unsigned int *dsizep)
 	__set_page_locked(page);
 	p = kmap_atomic(page);
 
-	/*
-	 * We have to flush the cache data before reading to be sure we read
-	 * an actual copy.
-	 */
-	__cpuc_flush_dcache_area(p, PAGE_SIZE);
 	ret = crypto_comp_compress(ccp, p, PAGE_SIZE, buff, dsizep);
 
 	kunmap_atomic(p);
@@ -282,11 +272,6 @@ static void fill_page_with_zeroes(struct page *page)
 	p = kmap_atomic(page);
 
 	memset(p, 0, PAGE_SIZE);
-	/*
-	 * We have to flush the cache to be sure the the data will be read by
-	 * GPU.
-	 */
-	__cpuc_flush_dcache_area(p, PAGE_SIZE);
 
 	kunmap_atomic(p);
 	unlock_page(page);
@@ -313,11 +298,6 @@ static int decompress_page(struct page *page, u8 *src, unsigned int size)
 	dst = kmap_atomic(page);
 
 	ret = crypto_comp_decompress(cc, src, size, dst, &dsize);
-	/*
-	 * We have to flush the cache to be sure the the data will be read by
-	 * GPU.
-	 */
-	__cpuc_flush_dcache_area(dst, PAGE_SIZE);
 
 	kunmap_atomic(dst);
 	put_cpu_var(gmc_storage_cc);
