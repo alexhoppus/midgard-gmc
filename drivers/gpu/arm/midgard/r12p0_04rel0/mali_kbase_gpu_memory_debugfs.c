@@ -117,9 +117,9 @@ static inline void seq_print_reg(struct seq_file *sfile,
 	else
 		seq_puts(sfile, "      -  ");
 
-	seq_printf(sfile, "%8u", cpu_alloc ? cpu_alloc->nents : 0);
+	seq_printf(sfile, "%8zu", cpu_alloc ? cpu_alloc->nents : 0);
 	seq_puts(sfile, "       ");
-	seq_printf(sfile, "%8u", (gpu_alloc && (cpu_alloc != gpu_alloc)) ? gpu_alloc->nents : 0);
+	seq_printf(sfile, "%8zu", (gpu_alloc && (cpu_alloc != gpu_alloc)) ? gpu_alloc->nents : 0);
 #if MALI_GMC
 	seq_printf(sfile, " %7zu  ", count_compressed_pages(cpu_alloc));
 #else

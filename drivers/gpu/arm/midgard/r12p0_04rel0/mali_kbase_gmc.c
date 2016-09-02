@@ -177,8 +177,8 @@ int noinline kbase_gmc_page_compress(phys_addr_t *p, struct kbase_device *kbdev)
 
 	handle = gmc_storage_put_page(kbdev->kbase_gmc_device.storage, page);
 	if (IS_ERR(handle)) {
-		if ((int) handle != -EFBIG) {
-			pr_alert("gmc_storage_put_page put_error: %d\n", (int) handle);
+		if (PTR_ERR(handle) != -EFBIG) {
+			pr_alert("gmc_storage_put_page put_error: %p\n", handle);
 			return -EINVAL;
 		}
 		return -EINVAL;
