@@ -221,9 +221,7 @@ static int kbasep_gpu_memory_seq_show(struct seq_file *sfile, void *data)
 			rcu_read_lock();
 			tsk = find_task_by_vpid(kctx->tgid);
 			if (tsk) {
-				get_task_struct(tsk);
 				get_task_comm(tsk_name, tsk);
-				put_task_struct(tsk);
 			}
 			rcu_read_unlock();
 
