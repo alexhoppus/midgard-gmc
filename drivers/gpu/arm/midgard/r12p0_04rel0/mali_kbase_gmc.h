@@ -22,18 +22,6 @@ struct kbase_gmc_tsk {
 	int trylock_status;
 };
 
-/* worker for doing parallel gmc operations */
-void kbase_gmc_walk_region_work(struct work_struct *work);
-/* bring back compressed pages and optionally map them back to gpu,
- * the region is given as input */
-int kbase_get_compressed_region(struct kbase_va_region *reg, u64 vpfn, size_t nr);
-/* bring back compressed pages (the alloc is given as input) */
-int kbase_get_compressed_alloc(struct kbase_mem_phy_alloc *alloc, u64 start_idx, size_t nr);
-/* assert if pages are compressed */
-void kbase_pages_decompressed_assert(phys_addr_t *p, size_t nr);
-/* this will be removed soon */
-void kbase_gmc_invalidate_alloc(struct kbase_context *kctx,
-		phys_addr_t *start, size_t pages_num);
 /* generic gmc interface for compression / decompression */
 int kbase_gmc_compress(pid_t pid, struct gmc_device *gmc_dev);
 int kbase_gmc_decompress(pid_t pid, struct gmc_device *gmc_dev);
@@ -72,4 +60,39 @@ static inline struct gmc_storage_handle *kbase_get_gmc_handle(phys_addr_t p)
 {
 	return (struct gmc_storage_handle *)(p & ~KBASE_ENTRY_COMPRESSED);
 }
+
+#if MALI_GMC
+/* bring back compressed pages and optionally map them back to gpu,
+ * the region is given as input */
+int kbase_get_compressed_region(struct kbase_va_region *reg, u64 vpfn, size_t nr);
+
+/* drop gmc data associated with allocation */
+void kbase_gmc_invalidate_alloc(struct kbase_context *kctx, phys_addr_t *start, size_t pages_num);
+
+/* bring back compressed pages (the alloc is given as input) */
+int kbase_get_compressed_alloc(struct kbase_mem_phy_alloc *alloc, u64 start_idx, size_t nr);
+
+/* worker for doing parallel gmc operations */
+void kbase_gmc_walk_region_work(struct work_struct *work);
+#else
+static inline int kbase_get_compressed_region(struct kbase_va_region *reg, u64 vpfn, size_t nr)
+{
+	return 0;
+};
+
+static inline void kbase_gmc_invalidate_alloc(struct kbase_context *kctx, phys_addr_t *start, size_t pages_num)
+{
+	return;
+}
+
+static inline int kbase_get_compressed_alloc(struct kbase_mem_phy_alloc *alloc, u64 start_idx, size_t nr)
+{
+	return 0;
+}
+
+static inline void kbase_gmc_walk_region_work(struct work_struct *work)
+{
+	return;
+}
+#endif
 #endif

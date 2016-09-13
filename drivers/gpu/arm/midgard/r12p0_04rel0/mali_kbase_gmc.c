@@ -10,8 +10,6 @@
 #include <linux/kthread.h>
 #include <linux/wait.h>
 
-#if MALI_GMC
-
 #define pr_fmt(fmt) "kbase-gmc: " fmt
 
 static atomic_t n_gmc_workers = ATOMIC_INIT(0);
@@ -551,41 +549,3 @@ int kbase_gmc_decompress(pid_t pid, struct gmc_device *gmc_dev)
 	struct kbase_device *kbdev = container_of(gmc_dev, struct kbase_device, kbase_gmc_device);
 	return kbase_gmc_walk_device(kbdev, pid, GMC_DECOMPRESS);
 }
-#else
-
-int kbase_get_compressed_region(struct kbase_va_region *reg, u64 vpfn, size_t nr)
-{
-	return 0;
-}
-
-int kbase_get_compressed_alloc(struct kbase_mem_phy_alloc *alloc, u64 start_idx, size_t nr)
-{
-	return 0;
-}
-
-void kbase_pages_decompressed_assert(phys_addr_t *p, size_t nr)
-{
-}
-
-int kbase_gmc_compress(pid_t pid, struct gmc_device *gmc_dev)
-{
-	return 0;
-}
-
-int kbase_gmc_decompress(pid_t pid, struct gmc_device *gmc_dev)
-{
-	return 0;
-}
-
-int kbase_gmc_decompress_alloc(struct kbase_context *kctx,
-		phys_addr_t *start, size_t pages_num)
-{
-	return 0;
-}
-
-void kbase_gmc_invalidate_alloc(struct kbase_context *kctx,
-		phys_addr_t *start, size_t pages_num)
-{
-}
-
-#endif

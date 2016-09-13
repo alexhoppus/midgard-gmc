@@ -120,7 +120,11 @@ SRC := \
 	mali_kbase_mem_pool_debugfs.c \
 	mali_kbase_tlstream.c \
 	mali_kbase_strings.c \
-	mali_kbase_gmc.c
+
+
+ifeq ($(MALI_GMC),1)
+	SRC += mali_kbase_gmc.c
+endif
 
 ifeq ($(MALI_UNIT_TEST),1)
 	SRC += mali_kbase_tlstream_test.c
