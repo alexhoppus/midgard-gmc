@@ -258,40 +258,6 @@ static int kbase_gmc_compress_region(struct kbase_va_region *reg, u64 vpfn, size
 }
 
 /**
- * kbase_gmc_invalidate_page - Invalidates page. This could be used when
- * data of associated page is not needed anymore and this page is put into
- * gmc storage. In this case we can just reallocate clean page instead of
- * performing decompression.
- * @kbdev:        kbase device
- * @p:            page physical address
- *
- * Return: nothing
- */
-void kbase_gmc_invalidate_page(struct kbase_device *kbdev, phys_addr_t *p)
-{
-	dma_addr_t dma_addr;
-	struct page *page;
-	gfp_t flags;
-
-#if defined(CONFIG_ARM) && !defined(CONFIG_HAVE_DMA_ATTRS) && LINUX_VERSION_CODE < KERNEL_VERSION(3, 5, 0)
-	flags = GFP_USER | __GFP_ZERO;
-#else
-	flags = GFP_HIGHUSER | __GFP_ZERO;
-#endif
-	gmc_storage_invalidate_page(kbdev->kbase_gmc_device.storage, kbase_get_gmc_handle(*p));
-
-	page = alloc_page(flags);
-	if (!page) {
-		pr_err("Unable to alloc destination page.\n");
-		BUG();
-	}
-	dma_addr = kbase_gmc_dma_map_page(kbdev, page);
-	*p = page_to_phys(page);
-
-	BUG_ON(dma_addr != *p);
-}
-
-/**
  * kbase_gmc_invalidate_alloc - Invalidates entire page set from alloc
  * @kctx:        Graphical context
  * @start:       phy addr to start with
@@ -309,8 +275,11 @@ void kbase_gmc_invalidate_alloc(struct kbase_context *kctx,
 	for (i = 0; i < pages_num; i++) {
 		phys_addr_t *p = &start[i];
 
-		if (*p && kbase_is_entry_compressed(*p))
-			kbase_gmc_invalidate_page(kctx->kbdev, p);
+		if (*p && kbase_is_entry_compressed(*p)) {
+			gmc_storage_invalidate_page(kctx->kbdev->kbase_gmc_device.storage,
+				kbase_get_gmc_handle(*p));
+			*p = 0;
+		}
 	}
 }
 
