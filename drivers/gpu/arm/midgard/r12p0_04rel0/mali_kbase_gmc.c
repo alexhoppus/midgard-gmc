@@ -34,7 +34,6 @@ static void kbase_gmc_unlock_task(struct kbase_gmc_tsk *gmc_tsk, enum kbase_gmc_
 	} else {
 		kbase_gpu_vm_unlock(gmc_tsk->kctx);
 		up_write(&gmc_tsk->task->mm->mmap_sem);
-		mmput(gmc_tsk->task->mm);
 		put_task_struct(gmc_tsk->task);
 	}
 }
@@ -57,7 +56,6 @@ static void kbase_gmc_unlock_task(struct kbase_gmc_tsk *gmc_tsk, enum kbase_gmc_
 static int kbase_gmc_trylock_task(struct kbase_gmc_tsk *gmc_tsk, enum kbase_gmc_op op)
 {
 	struct task_struct *tsk;
-	struct mm_struct *mm;
 	if (!(op == GMC_COMPRESS)) {
 		/*op != GMC_COMPRESS */
 		kbase_gpu_vm_lock(gmc_tsk->kctx);
@@ -73,13 +71,7 @@ static int kbase_gmc_trylock_task(struct kbase_gmc_tsk *gmc_tsk, enum kbase_gmc_
 		}
 		get_task_struct(tsk);
 		rcu_read_unlock();
-		mm = get_task_mm(tsk);
-		if (!mm) {
-			/* MM is gone nothing to do */
-			put_task_struct(tsk);
-			return -1;
-		}
-		down_write(&mm->mmap_sem);
+		down_write(&tsk->mm->mmap_sem);
 		kbase_gpu_vm_lock(gmc_tsk->kctx);
 		gmc_tsk->task = tsk;
 	}
