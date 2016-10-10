@@ -34,6 +34,7 @@ static void kbase_gmc_unlock_task(struct kbase_gmc_tsk *gmc_tsk, enum kbase_gmc_
 	} else {
 		kbase_gpu_vm_unlock(gmc_tsk->kctx);
 		up_write(&gmc_tsk->task->mm->mmap_sem);
+		mmdrop(gmc_tsk->task->mm);
 		put_task_struct(gmc_tsk->task);
 	}
 }
@@ -71,6 +72,15 @@ static int kbase_gmc_trylock_task(struct kbase_gmc_tsk *gmc_tsk, enum kbase_gmc_
 		}
 		get_task_struct(tsk);
 		rcu_read_unlock();
+		task_lock(tsk);
+		if (tsk->mm)
+			atomic_inc(&tsk->mm->mm_count);
+		else {
+			task_unlock(tsk);
+			put_task_struct(tsk);
+			return -1;
+		}
+		task_unlock(tsk);
 		down_write(&tsk->mm->mmap_sem);
 		kbase_gpu_vm_lock(gmc_tsk->kctx);
 		gmc_tsk->task = tsk;
