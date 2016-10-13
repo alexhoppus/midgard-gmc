@@ -12,8 +12,7 @@
 
 enum kbase_gmc_op {
 	GMC_COMPRESS,
-	GMC_DECOMPRESS,
-	GMC_COUNT_DECOMPRESSED,
+	GMC_DECOMPRESS
 };
 
 struct kbase_gmc_tsk {

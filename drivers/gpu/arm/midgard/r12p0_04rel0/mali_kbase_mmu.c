@@ -88,7 +88,7 @@ static size_t make_multiple(size_t minimum, size_t multiple)
 int kbase_gmc_handle_gpu_page_fault(struct kbase_as *faulting_as,
 	struct kbase_va_region *region)
 {
-	int pages_decompressed = 0, err = 0;
+	int err = 0;
 	u32 op;
 	/* We may map 8 pages (or more) because of in case of large
 	 * textures other page faults are expected, it will
@@ -108,14 +108,17 @@ int kbase_gmc_handle_gpu_page_fault(struct kbase_as *faulting_as,
 
 	mutex_lock(&faulting_as->transaction_mutex);
 
-	pages_decompressed = kbase_get_compressed_region(region, region->start_pfn +
-		fault_block_pfn, map_block_size);
-	if (IS_ERR_VALUE(pages_decompressed))
-		err = pages_decompressed;
+	pr_debug("%s kctx %d region %p, pfn range [%llu, %llu]\n",
+		__func__, (int)region->kctx->tgid, region, region->start_pfn + fault_block_pfn,
+		region->start_pfn + fault_block_pfn + map_block_size);
 
-	/* insert gpu mappings */
-	kbase_mmu_insert_pages(region->kctx, region->start_pfn + fault_block_pfn,
-		&region->cpu_alloc->pages[fault_block_pfn], map_block_size, region->flags);
+	err = kbase_get_compressed_region(region, region->start_pfn +
+		fault_block_pfn, map_block_size);
+	if (!err) {
+		/* insert gpu mappings */
+		err = kbase_mmu_insert_pages(region->kctx, region->start_pfn + fault_block_pfn,
+				&region->cpu_alloc->pages[fault_block_pfn], map_block_size, region->flags);
+	}
 
 	/* flush L2 and unlock the VA (resumes the MMU) */
 	if (kbase_hw_has_issue(kbdev, BASE_HW_ISSUE_6367))
@@ -244,6 +247,7 @@ void page_fault_worker(struct work_struct *data)
 		goto fault_done;
 	} else if (err != GMC_PF_OUT_OF_BOUNDS) {
 		kbase_gpu_vm_unlock(kctx);
+		pr_emerg("can't decompress page on page fault, err %d\n", err);
 		kbase_mmu_report_fault_and_kill(kctx, faulting_as,
 				"GMC can't decompress pages");
 		goto fault_done;

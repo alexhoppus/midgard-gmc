@@ -13,7 +13,7 @@
 #include <linux/wait.h>
 
 static atomic_t n_gmc_workers = ATOMIC_INIT(0);
-static atomic_t overall_pages_handled = ATOMIC_INIT(0);
+static atomic_t n_gmc_workers_failed = ATOMIC_INIT(0);
 static DECLARE_WAIT_QUEUE_HEAD(gmc_wait);
 
 #define GMC_WORKER_TIMEOUT_MS 10000
@@ -68,7 +68,8 @@ static int kbase_gmc_trylock_task(struct kbase_gmc_tsk *gmc_tsk, enum kbase_gmc_
 		if (!tsk) {
 			/* Task is gone nothing to do */
 			rcu_read_unlock();
-			return -1;
+			pr_debug("task is gone, can't lock\n");
+			return -ESRCH;
 		}
 		get_task_struct(tsk);
 		rcu_read_unlock();
@@ -78,7 +79,8 @@ static int kbase_gmc_trylock_task(struct kbase_gmc_tsk *gmc_tsk, enum kbase_gmc_
 		else {
 			task_unlock(tsk);
 			put_task_struct(tsk);
-			return -1;
+			pr_debug("mm is gone, can't lock\n");
+			return -ESRCH;
 		}
 		task_unlock(tsk);
 		down_write(&tsk->mm->mmap_sem);
@@ -170,20 +172,26 @@ int noinline kbase_gmc_page_compress(phys_addr_t *p, struct kbase_device *kbdev)
 
 	BUG_ON(kbase_is_entry_compressed(*p));
 	page = pfn_to_page(PFN_DOWN(*p));
-	if (!kbase_dma_addr(page))
+	if (!kbase_dma_addr(page)) {
+		pr_debug("compression for physaddr %llu initiated,\
+			but dma address was not set\n", (unsigned long long) *p);
 		return -EINVAL;
+	}
 
 	kbase_gmc_dma_unmap_page(kbdev, page);
 
 	handle = gmc_storage_put_page(kbdev->kbase_gmc_device.storage, page);
 	if (IS_ERR(handle)) {
+		dma_addr_t dma_addr;
+		dma_addr = kbase_gmc_dma_map_page(kbdev, page);
+		BUG_ON(dma_addr != *p);
 		if (PTR_ERR(handle) != -EFBIG) {
-			pr_alert("gmc_storage_put_page put_error: %p\n", handle);
-			kbase_gmc_dma_map_page(kbdev, page);
+			pr_alert("can't compress physaddr %llu, err: %p\n",
+				(unsigned long long) *p, handle);
 			return -EINVAL;
 		}
-		kbase_gmc_dma_map_page(kbdev, page);
-		return -EINVAL;
+		pr_debug("physaddr %llu is badly compressed, skipping it\n", (unsigned long long) *p);
+		return 0;
 	}
 
 	*p = kbase_set_gmc_handle(handle);
@@ -218,19 +226,22 @@ static bool region_should_be_compressed(struct kbase_va_region *reg)
  * @start_idx:    Start index
  * @nr:           Number of pages
  *
- * Return: Number of pages compressed or error.
+ * Return: 0 on success or error.
  */
 static int kbase_gmc_compress_alloc(struct kbase_mem_phy_alloc *alloc, u64 start_idx, size_t nr)
 {
-	int i, pages_compressed = 0;
+	int i, ret = 0;
 	for (i = start_idx; i < start_idx + nr; i++) {
 		phys_addr_t *p = &alloc->pages[i];
 		if (*p && kbase_is_entry_decompressed(*p)) {
-			if (!kbase_gmc_page_compress(p, alloc->imported.kctx->kbdev))
-				pages_compressed++;
+			ret = kbase_gmc_page_compress(p, alloc->imported.kctx->kbdev);
+			if (ret) {
+				pr_err("can't compress page, physaddr %llu\n", (unsigned long long) *p);
+				return ret;
+			}
 		}
 	}
-	return pages_compressed;
+	return ret;
 }
 
 /**
@@ -248,16 +259,21 @@ static int kbase_gmc_compress_alloc(struct kbase_mem_phy_alloc *alloc, u64 start
  */
 static int kbase_gmc_compress_region(struct kbase_va_region *reg, u64 vpfn, size_t nr)
 {
+	int ret = 0;
 	if (!region_should_be_compressed(reg))
-		return 0;
+		return ret;
 	/* unmap all pages from CPU */
-	if (kbase_mem_shrink_cpu_mapping(reg->kctx, reg, 0, reg->cpu_alloc->nents))
-		return 0;
+	ret = kbase_mem_shrink_cpu_mapping(reg->kctx, reg, 0, reg->cpu_alloc->nents);
+	if (ret)
+		return ret;
 
 	/* unmap all pages from GPU */
-	if (kbase_mem_shrink_gpu_mapping(reg->kctx, reg, 0, reg->gpu_alloc->nents))
-		return 0;
+	ret = kbase_mem_shrink_gpu_mapping(reg->kctx, reg, 0, reg->gpu_alloc->nents);
+	if (ret)
+		return ret;
 
+	pr_debug("%s kctx %d region %p, pfn range [%llu, %llu]\n",
+		__func__, (int)reg->kctx->tgid, reg, vpfn, vpfn + nr);
 	return kbase_gmc_compress_alloc(reg->cpu_alloc, vpfn - reg->start_pfn, nr);
 }
 
@@ -280,6 +296,7 @@ void kbase_gmc_invalidate_alloc(struct kbase_context *kctx,
 		phys_addr_t *p = &start[i];
 
 		if (*p && kbase_is_entry_compressed(*p)) {
+			pr_debug("%s handle %p\n", __func__, kbase_get_gmc_handle(*p));
 			gmc_storage_invalidate_page(kctx->kbdev->kbase_gmc_device.storage,
 				kbase_get_gmc_handle(*p));
 			*p = 0;
@@ -293,41 +310,22 @@ void kbase_gmc_invalidate_alloc(struct kbase_context *kctx,
  * @start:       phy addr to start with
  * @pages_num:   number of pages to invalidate
  *
- * Return: nothing
+ * Return: 0 if success, or error if decompression failed
  */
 static int kbase_gmc_decompress_alloc(struct kbase_mem_phy_alloc *alloc, u64 start_idx, size_t nr)
 {
-	int i, pages_decompressed = 0;
+	int i, ret = 0;
 	for (i = start_idx; i < start_idx + nr; i++) {
 		phys_addr_t *p = &alloc->pages[i];
 		if (*p && kbase_is_entry_compressed(*p)) {
-			int ret = kbase_gmc_page_decompress(p, alloc->imported.kctx->kbdev);
-			if (!ret)
-				pages_decompressed++;
-			else
+			ret = kbase_gmc_page_decompress(p, alloc->imported.kctx->kbdev);
+			if (ret) {
+				pr_err("can't decompress page, physaddr %llu\n", (unsigned long long) *p);
 				return ret;
+			}
 		}
 	}
-	return pages_decompressed;
-}
-
-/**
- * kbase_gmc_count_decompressed - Counts number of pages not yet compressed
- * @alloc:        Physical pages allocation
- * @vpfn:         Strarting virtual pfn
- * @nr:           Number of pages
- *
- * Return: Number of pages decompressed  or error.
- */
-static int kbase_gmc_count_decompressed(struct kbase_va_region *reg, u64 vpfn, size_t nr)
-{
-	int i = 0, pages_count = 0;
-	for (i = 0; i < reg->cpu_alloc->nents; i++) {
-		phys_addr_t *p = &reg->cpu_alloc->pages[i];
-		if (*p && kbase_is_entry_decompressed(*p))
-			pages_count++;
-	}
-	return pages_count;
+	return ret;
 }
 
 static int kbase_gmc_decompress_region(struct kbase_va_region *reg, u64 vpfn, size_t nr)
@@ -343,7 +341,7 @@ static int kbase_gmc_decompress_region(struct kbase_va_region *reg, u64 vpfn, si
  * @op:         Operation - could be GMC_COMPRESS, GMC_DECOMPRESS or
  *              GMC_COUNT_DECOMPRESSED
  *
- * Return: Number of pages succesfully handled by operation op or error.
+ * Return: 0 on success or error.
  */
 static int kbase_gmc_walk_region(struct kbase_va_region *reg, enum kbase_gmc_op op)
 {
@@ -369,18 +367,13 @@ static int kbase_gmc_walk_region(struct kbase_va_region *reg, enum kbase_gmc_op 
 	switch (op) {
 	case GMC_DECOMPRESS:
 		ret = kbase_gmc_decompress_region(reg, reg->start_pfn, cpu_alloc->nents);
-		if (IS_ERR_VALUE(ret))
-			KBASE_DEBUG_ASSERT(0);
 		break;
 	case GMC_COMPRESS:
 		ret = kbase_gmc_compress_region(reg, reg->start_pfn, cpu_alloc->nents);
 		break;
-	case GMC_COUNT_DECOMPRESSED:
-		ret = kbase_gmc_count_decompressed(reg, reg->start_pfn, cpu_alloc->nents);
-		break;
 	default:
 		pr_err("Invalid GMC operation\n");
-		KBASE_DEBUG_ASSERT(0);
+		ret = -EINVAL;
 	}
 
 	kbase_mem_phy_alloc_put(gpu_alloc);
@@ -397,12 +390,16 @@ static int kbase_gmc_walk_region(struct kbase_va_region *reg, enum kbase_gmc_op 
  */
 void kbase_gmc_walk_region_work(struct work_struct *work)
 {
-	int pages_handled = 0;
+	int ret = 0;
 	struct kbase_va_region *reg = container_of(work, struct kbase_va_region, gmc_work);
-	pages_handled = kbase_gmc_walk_region(reg, reg->op);
+	pr_debug("worker [%p] have started, op %d\n", work, reg->op);
+	ret = kbase_gmc_walk_region(reg, reg->op);
+	if (ret) {
+		pr_err("worker [%p] has errors during operation %d\n", work, reg->op);
+		atomic_inc(&n_gmc_workers_failed);
+	}
 	atomic_dec(&n_gmc_workers);
 	wake_up_interruptible(&gmc_wait);
-	atomic_add(pages_handled, &overall_pages_handled);
 }
 
 /**
@@ -410,8 +407,8 @@ void kbase_gmc_walk_region_work(struct work_struct *work)
  *
  * @kctx:      Graphical context
  * @op:         Operation - could be GMC_COMPRESS, GMC_DECOMPRESS or
- *              GMC_COUNT_DECOMPRESSED
- * Return: Number of pages handled by operation op.
+ *
+ * Return: 0 on success or error.
  */
 static int kbase_gmc_walk_kctx(struct kbase_context *kctx, enum kbase_gmc_op op)
 {
@@ -419,13 +416,14 @@ static int kbase_gmc_walk_kctx(struct kbase_context *kctx, enum kbase_gmc_op op)
 	struct rb_node *node;
 	struct kbase_va_region *reg = NULL;
 	struct kbase_gmc_tsk gmc_tsk;
+	int n_workers_failed = 0;
 	gmc_tsk.kctx = kctx;
 	gmc_tsk.task = NULL;
 
 	KBASE_DEBUG_ASSERT(!atomic_read(&n_gmc_workers));
-	atomic_set(&overall_pages_handled, 0);
-
-	if (kbase_gmc_trylock_task(&gmc_tsk, op))
+	atomic_set(&n_gmc_workers_failed, 0);
+	ret = kbase_gmc_trylock_task(&gmc_tsk, op);
+	if (ret)
 		return ret;
 
 	for_each_rb_node(&(kctx->reg_rbtree), node) {
@@ -441,13 +439,19 @@ static int kbase_gmc_walk_kctx(struct kbase_context *kctx, enum kbase_gmc_op op)
 			!atomic_read(&n_gmc_workers),
 			msecs_to_jiffies(GMC_WORKER_TIMEOUT_MS));
 		if (err <= 0) {
-			pr_warn("Timeout while waiting GMC workers, \
-				compression takes more than %d sec\n",
+			pr_alert("Timeout while waiting GMC workers, \
+				it takes more than %d sec\n",
 				GMC_WORKER_TIMEOUT_MS);
+			kbase_gmc_unlock_task(&gmc_tsk, op);
+			return -ETIMEDOUT;
 		}
 	}
-	ret = atomic_read(&overall_pages_handled);
 	kbase_gmc_unlock_task(&gmc_tsk, op);
+	n_workers_failed = atomic_read(&n_gmc_workers_failed);
+	if (n_workers_failed > 0) {
+		pr_err("%d workers has failed to complete\n", n_workers_failed);
+		ret = -EINVAL;
+	}
 	return ret;
 }
 
@@ -495,9 +499,13 @@ int kbase_gmc_walk_device(struct kbase_device *kbdev, pid_t pid, enum kbase_gmc_
 	mutex_lock(&kbdev->kctx_list_lock);
 	list_for_each_entry(element, &kbdev->kctx_list, link) {
 		struct kbase_context *kctx = element->kctx;
-		if (kctx->tgid == pid || pid == GMC_HANDLE_ALL_KCTXS)
-			ret += kbase_gmc_walk_kctx(kctx, op);
+		if (kctx->tgid == pid || pid == GMC_HANDLE_ALL_KCTXS) {
+			ret = kbase_gmc_walk_kctx(kctx, op);
+			if (ret)
+				goto out;
+		}
 	}
+out:
 	mutex_unlock(&kbdev->kctx_list_lock);
 	return ret;
 }
@@ -507,7 +515,7 @@ int kbase_gmc_walk_device(struct kbase_device *kbdev, pid_t pid, enum kbase_gmc_
  * @pid:        Traget pid to compress
  * @gmc_dev:    graphical memory compression device passed from generic layer
  *
- * Return: Number of pages compressed or error if compression is failed.
+ * Return: 0 if success error if compression is failed.
  */
 int kbase_gmc_compress(pid_t pid, struct gmc_device *gmc_dev)
 {
@@ -520,7 +528,7 @@ int kbase_gmc_compress(pid_t pid, struct gmc_device *gmc_dev)
  * @pid:        Traget pid to decompress
  * @gmc_dev:    graphical memory compression device passed from generic layer
  *
- * Return: Number of pages decompressed or error if decompression is failed.
+ * Return: 0 if success error if decompression is failed.
  */
 int kbase_gmc_decompress(pid_t pid, struct gmc_device *gmc_dev)
 {
