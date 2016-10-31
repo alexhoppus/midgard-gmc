@@ -341,17 +341,21 @@ static int kbase_gmc_walk_region(struct kbase_va_region *reg, enum kbase_gmc_op 
 	struct kbase_mem_phy_alloc *cpu_alloc = reg->cpu_alloc;
 	struct kbase_mem_phy_alloc *gpu_alloc = reg->gpu_alloc;
 
-	kbase_mem_phy_alloc_get(cpu_alloc);
-	kbase_mem_phy_alloc_get(gpu_alloc);
-
 	if (!cpu_alloc)
 		return ret;
+
+	kbase_mem_phy_alloc_get(cpu_alloc);
+	kbase_mem_phy_alloc_get(gpu_alloc);
 
 	/* if allocation is KBASE_MEM_TYPE_IMPORTED_UMM i.e.,
 	 * it's used for DMA operations between drivers, so
 	 * don't touch it (it's usally DRM/GEM memory) */
-	if (cpu_alloc->type != KBASE_MEM_TYPE_NATIVE)
+	if (cpu_alloc->type != KBASE_MEM_TYPE_NATIVE) {
+		kbase_mem_phy_alloc_put(gpu_alloc);
+		kbase_mem_phy_alloc_put(cpu_alloc);
 		return ret;
+	}
+
 	switch (op) {
 	case GMC_DECOMPRESS:
 		ret = kbase_gmc_decompress_region(reg, reg->start_pfn, cpu_alloc->nents);
@@ -368,6 +372,7 @@ static int kbase_gmc_walk_region(struct kbase_va_region *reg, enum kbase_gmc_op 
 		pr_err("Invalid GMC operation\n");
 		KBASE_DEBUG_ASSERT(0);
 	}
+
 	kbase_mem_phy_alloc_put(gpu_alloc);
 	kbase_mem_phy_alloc_put(cpu_alloc);
 	return ret;
