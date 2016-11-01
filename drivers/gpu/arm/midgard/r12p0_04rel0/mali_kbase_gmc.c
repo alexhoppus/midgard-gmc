@@ -1,3 +1,5 @@
+#define pr_fmt(fmt) "kbase-gmc: " fmt
+
 #include "mali_kbase_gmc.h"
 #include "mali_kbase_debug.h"
 #include "mali_kbase_mem_linux.h"
@@ -9,8 +11,6 @@
 #include <linux/page-flags.h>
 #include <linux/kthread.h>
 #include <linux/wait.h>
-
-#define pr_fmt(fmt) "kbase-gmc: " fmt
 
 static atomic_t n_gmc_workers = ATOMIC_INIT(0);
 static atomic_t overall_pages_handled = ATOMIC_INIT(0);
