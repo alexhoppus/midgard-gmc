@@ -1,8 +1,32 @@
 /*
+ * Copyright 2016 Samsung Electronics Co., Ltd. All rights reserved.
+ *
+ * Authors:
+ *   Alexander Yashchenko <a.yashchenko@samsung.com>
+ *   Sergei Rogachev <s.rogachev@samsung.com>
+ *
+ * This file is part of GMC (graphical memory compression) framework.
+ *
+ * GMC is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Foobar is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with GMC. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/*
  * gmc.c - implementation of generic interface for communication with user
  * space daemon that can be used to implement 'native' memory compression
  * facilities in GPU kernel driver.
  */
+
 #include <linux/debugfs.h>
 #include <linux/module.h>
 #include <linux/fs.h>
@@ -13,6 +37,8 @@
 
 #include <asm/uaccess.h>
 
+#define GMC_DEBUGFS_BUFMAX 1024
+
 static atomic_t gmc_device_number = ATOMIC_INIT(0);
 static struct dentry *gmc_root_dentry = NULL;
 
@@ -21,10 +47,15 @@ static unsigned int gmc_alloc_device_number(void)
 	return atomic_add_return(1, &gmc_device_number) - 1;
 }
 
-static unsigned long read_pid(const char __user *ubuf, size_t len, loff_t *offp)
+static long read_pid(const char __user *ubuf, size_t len, loff_t *offp)
 {
-	unsigned long pid;
 	char buf[32];
+	/*
+	 * The variable pid here is signed long to satisfy requirements of
+	 * the function kstrtol(). pid_t is defined in the kernel as int, thus
+	 * the variable pid here has a higher value domain.
+	 */
+	long pid;
 
 	if (len > sizeof(buf) - 1)
 		return -EINVAL;
@@ -33,7 +64,7 @@ static unsigned long read_pid(const char __user *ubuf, size_t len, loff_t *offp)
 		return -EFAULT;
 	buf[len] = '\0';
 
-	if (kstrtoul(&buf[0], 10, &pid) != 0)
+	if (kstrtol(&buf[0], 10, &pid) != 0)
 		return -EINVAL;
 
         if ((pid < 0) || (pid > PID_MAX_DEFAULT))
@@ -73,17 +104,16 @@ static ssize_t gmc_compress_write(struct file *file, const char __user *ubuf,
 {
 	struct gmc_device *device = (struct gmc_device *)
 		file->f_inode->i_private;
-	unsigned long ret;
+	long ret;
 
-	BUG_ON(!device);
+	if (!device)
+		return -EPERM;
 
 	ret = read_pid(ubuf, len, offp);
 	if (IS_ERR_VALUE(ret))
 		return ret;
 
-	pr_info("gmc_compress_write pid %lu\n", ret);
-
-	ret = gmc_compress_pid(device, ret);
+	ret = gmc_compress_pid(device, (pid_t)ret);
 	if (ret)
 		return ret;
 
@@ -95,17 +125,16 @@ static ssize_t gmc_decompress_write(struct file *file, const char __user *ubuf,
 {
 	struct gmc_device *device = (struct gmc_device *)
 		file->f_inode->i_private;
-	unsigned long ret;
+	long ret;
 
-	BUG_ON(!device);
+	if (!device)
+		return -EPERM;
 
 	ret = read_pid(ubuf, len, offp);
 	if (IS_ERR_VALUE(ret))
 		return ret;
 
-	pr_info("gmc_decompress_write pid %lu\n", ret);
-
-	ret = gmc_decompress_pid(device, ret);
+	ret = gmc_decompress_pid(device, (pid_t)ret);
 	if (ret)
 		return ret;
 
@@ -115,15 +144,14 @@ static ssize_t gmc_decompress_write(struct file *file, const char __user *ubuf,
 static ssize_t gmc_storage_stat_read(struct file *file, char __user *ubuf,
 			    size_t len, loff_t *offp)
 {
-	ssize_t ret, out_offset, out_count;
-	char *buf;
-
+	ssize_t ret, out_offset, out_count = GMC_DEBUGFS_BUFMAX;
 	struct gmc_device *device = (struct gmc_device *)
 		file->f_inode->i_private;
+	char *buf;
 
-	BUG_ON(!device);
+	if (!device)
+		return -EPERM;
 
-	out_count = 1024;
 	buf = kmalloc(out_count, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
@@ -142,6 +170,11 @@ static ssize_t gmc_storage_stat_read(struct file *file, char __user *ubuf,
 			(unsigned long long) atomic64_read(
 				&device->storage->stat.nr_zero_pages) * 4);
 
+	/*
+	 * In case of an error, the following function returns a negative error
+	 * code which is propagated upwards the call stack, thus the read system
+	 * call will return a positive number of copied symbols or an error.
+	 */
 	ret = simple_read_from_buffer(ubuf, len, offp, buf, out_offset);
 	kfree(buf);
 
@@ -198,7 +231,7 @@ int gmc_register_device(struct gmc_ops *gmc_operations, struct gmc_device *devic
 	struct dentry      *device_dir_dentry;
 
 	unsigned int id;
-	int i;
+	int i, err = -EINVAL;
 
 	/*
 	 * This data structure describes files associated with some particular
@@ -224,6 +257,7 @@ int gmc_register_device(struct gmc_ops *gmc_operations, struct gmc_device *devic
 	storage = gmc_storage_create();
 	if (!storage) {
 		pr_err("Unable to create a storage for the device.\n");
+		err = -ENOMEM;
 		goto error_out;
 	}
 
@@ -263,11 +297,10 @@ int gmc_register_device(struct gmc_ops *gmc_operations, struct gmc_device *devic
 
 error_cleanup_debugfs:
 	debugfs_remove_recursive(gmc_root_dentry);
-	kfree(storage);
 error_destroy_storage:
 	gmc_storage_destroy(storage);
 error_out:
-	return -EINVAL;
+	return err;
 }
 
 MODULE_AUTHOR("Sergei Rogachev <s.rogachev@samsung.com>");

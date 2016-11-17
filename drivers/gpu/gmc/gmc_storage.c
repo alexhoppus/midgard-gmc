@@ -1,4 +1,29 @@
 /*
+ * Copyright 2016 Samsung Electronics Co., Ltd. All rights reserved.
+ *
+ * Authors:
+ *   Sergei Rogachev <s.rogachev@samsung.com>
+ *   Alexander Yashchenko <a.yashchenko@samsung.com>
+ *
+ * Some ideas were got from a prototype made by Krzysztof Kozlowski.
+ *
+ * This file is part of GMC (graphical memory compression) framework.
+ *
+ * GMC is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Foobar is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with GMC. If not, see <http://www.gnu.org/licenses/>.
+ */
+
+/*
  * gmc_storage.c - implementation of generic interface for compressed objects
  * storage that can be used by GPU kernel drivers to implement 'native' memory
  * compression facilities.
@@ -6,33 +31,46 @@
 
 #include <linux/gmc_storage.h>
 
+#define GMC_FLAG_ZERO (1 << 0)
+
+/*
+ * A threshold for determining badly-compressible pages.
+ * Refer to ZRAM source code for a similar formulae.
+ */
+#define GMC_COMPR_BAD_THR (PAGE_SIZE / 16 * 15)
+
 /**
  * struct gmc_storage_handle - generic handle of compressed page.
  *
  * @handle: a handle of compressed object (zpool handle);
- * @size: a size of compressed object;
+ * @size: a size of compressed object (we can use short integer because a
+ * maximum size is just a PAGE_SIZE or 4096 bytes);
  * @flags: flags associated with compressed object.
  */
 struct gmc_storage_handle {
-	unsigned long handle;
-	unsigned int  size;
-	unsigned long flags;
+	unsigned long  handle;
+	unsigned short size;
+	unsigned short flags;
 };
 
+/* Another possible value: lz4. */
 static char *gmc_storage_algorithm_str = "lzo";
+/* Another possible value: zbud. */
 static char *gmc_storage_allocator_str = "zsmalloc";
 
 static DEFINE_PER_CPU(struct crypto_comp *, gmc_storage_cc);
 static DEFINE_PER_CPU(u8 *, gmc_storage_buff);
 
+static struct kmem_cache *gmc_storage_handle_cache;
+
 static struct gmc_storage_handle *gmc_storage_handle_create(void)
 {
 	struct gmc_storage_handle *handle;
 
-	handle = kmalloc(sizeof(*handle), GFP_KERNEL);
+	handle = kmem_cache_alloc(gmc_storage_handle_cache, GFP_KERNEL);
 	if (!handle) {
 		pr_err("Unable to allocate storage handle.\n");
-		return NULL;
+		return ERR_PTR(-ENOMEM);
 	}
 
 	memset(handle, 0, sizeof(*handle));
@@ -46,19 +84,17 @@ static void gmc_storage_handle_destroy(struct gmc_storage_handle *handle)
 	if (!handle)
 		return;
 
-	kfree(handle);
+	kmem_cache_free(gmc_storage_handle_cache, handle);
 }
 
 static void gmc_storage_handle_set_zeroed(struct gmc_storage_handle *handle)
 {
-	/* Only one flag is supported now: zeroed page. */
-	handle->flags = 1;
+	handle->flags |= GMC_FLAG_ZERO;
 }
 
 static int gmc_storage_handle_is_zeroed(struct gmc_storage_handle *handle)
 {
-	/* Only one flag is supported now: zeroed page. */
-	return handle->flags;
+	return !!(handle->flags & GMC_FLAG_ZERO);
 }
 
 /**
@@ -99,14 +135,10 @@ static int is_page_zero_filled(struct page *page)
 	void *p;
 	int ret;
 
-	__set_page_locked(page);
 	/* It is safe, because we don't do any sleepy stuff here. */
 	p = kmap_atomic(page);
-
 	ret = is_region_zero_filled(p);
-
 	kunmap_atomic(p);
-	unlock_page(page);
 
 	return ret;
 }
@@ -128,13 +160,11 @@ static int compress_page(struct page *page, u8 *buff, unsigned int *dsizep)
 	int ret;
 
 	ccp = get_cpu_var(gmc_storage_cc);
-	__set_page_locked(page);
+
 	p = kmap_atomic(page);
-
 	ret = crypto_comp_compress(ccp, p, PAGE_SIZE, buff, dsizep);
-
 	kunmap_atomic(p);
-	unlock_page(page);
+
 	put_cpu_var(gmc_storage_cc);
 
 	return ret;
@@ -181,7 +211,7 @@ static int store_data(struct gmc_storage *storage, u8 *buff, unsigned int size,
  */
 static int is_well_compressed(unsigned int size)
 {
-	if (size >= PAGE_SIZE)
+	if (size >= GMC_COMPR_BAD_THR)
 		return 0;
 
 	return 1;
@@ -211,10 +241,8 @@ struct gmc_storage_handle *gmc_storage_put_page(struct gmc_storage *storage,
 	int err = 0;
 
 	storage_handle = gmc_storage_handle_create();
-	if (!storage_handle) {
-		err = -ENOMEM;
-		goto error;
-	}
+	if (IS_ERR(storage_handle))
+		return storage_handle;
 
 	if (is_page_zero_filled(page)) {
 		gmc_storage_handle_set_zeroed(storage_handle);
@@ -255,7 +283,7 @@ out:
 error_put_and_destroy:
 	put_cpu_var(gmc_storage_buff);
 	gmc_storage_handle_destroy(storage_handle);
-error:
+
 	return ERR_PTR(err);
 }
 
@@ -268,13 +296,9 @@ static void fill_page_with_zeroes(struct page *page)
 {
 	void *p;
 
-	__set_page_locked(page);
 	p = kmap_atomic(page);
-
 	memset(p, 0, PAGE_SIZE);
-
 	kunmap_atomic(p);
-	unlock_page(page);
 }
 
 /**
@@ -293,15 +317,13 @@ static int decompress_page(struct page *page, u8 *src, unsigned int size)
 	u8 *dst;
 	int ret;
 
-	__set_page_locked(page);
 	cc = get_cpu_var(gmc_storage_cc);
+
 	dst = kmap_atomic(page);
-
 	ret = crypto_comp_decompress(cc, src, size, dst, &dsize);
-
 	kunmap_atomic(dst);
+
 	put_cpu_var(gmc_storage_cc);
-	unlock_page(page);
 
 	return ret;
 }
@@ -452,7 +474,7 @@ static int gmc_storage_cpu_notifier(struct notifier_block *nb,
 		buff = kmalloc_node(PAGE_SIZE << 1, GFP_KERNEL,
 				cpu_to_node(cpu));
 		if (!buff) {
-			pr_err("Unable to allocate conpression buffer.\n");
+			pr_err("Unable to allocate compression buffer.\n");
 			crypto_free_comp(cc);
 			per_cpu(gmc_storage_cc, cpu) = NULL;
 			return NOTIFY_BAD;
@@ -491,6 +513,14 @@ static __init int gmc_storage_init(void)
 	}
 	__register_cpu_notifier(&gmc_storage_cpu_notifier_block);
 	cpu_notifier_register_done();
+
+	gmc_storage_handle_cache = kmem_cache_create("gmc_storage_handle_cache",
+			sizeof (struct gmc_storage_handle),
+			__alignof__(struct gmc_storage_handle), 0, NULL);
+	if (!gmc_storage_handle_cache) {
+		pr_err("Unable to create a cache for GMC storage handles.\n");
+		goto backtrack;
+	}
 
 	return 0;
 

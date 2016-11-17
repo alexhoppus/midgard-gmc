@@ -1,8 +1,11 @@
 config GPU_GMC_GENERIC
 	bool "A generic framework for GPU graphical memory compression"
-	default n
-	depends on (ZPOOL && CRYPTO_LZO)
+	default y
 	select DEBUG_FS
+	select ZSMALLOC
+	select ZPOOL
+	select CRYPTO
+	select CRYPTO_LZO
 	help
 	  Enabling the option forces the build system to compile the generic
 	  layer made for implementation of GPU memory reclaim facilities for
@@ -13,4 +16,3 @@ config GPU_GMC_GENERIC
 	  provides a set of interfaces that must be implemented by GPU kernel
 	  drivers and generic functions including compressed objects in-memory
 	  storage and user space interface.
-

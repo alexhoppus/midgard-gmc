@@ -1,6 +1,5 @@
-/*blabla*/
-#ifndef __NMC_H__
-#define __NMC_H__
+#ifndef __GMC_H__
+#define __GMC_H__
 
 #include <linux/types.h>
 #include <linux/gmc_storage.h>
@@ -20,11 +19,12 @@ struct gmc_device {
 	struct gmc_fs      fs;
 };
 
-int gmc_register_device(struct gmc_ops *gmc_operations, struct gmc_device *device);
-
 struct gmc_ops {
 	int (*compress_kctx) (pid_t, struct gmc_device *);
 	int (*decompress_kctx) (pid_t, struct gmc_device *);
 };
+
+int gmc_register_device(struct gmc_ops *gmc_operations,
+		struct gmc_device *device);
 
 #endif
