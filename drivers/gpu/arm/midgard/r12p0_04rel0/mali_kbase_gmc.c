@@ -123,7 +123,7 @@ dma_addr_t kbase_gmc_dma_map_page(struct kbase_device *kbdev, struct page *page)
  *
  * Return: 0 if page was decompressed or error code if something is wrong.
  */
-int noinline kbase_gmc_page_decompress(phys_addr_t *p, struct kbase_device *kbdev)
+static int kbase_gmc_page_decompress(phys_addr_t *p, struct kbase_device *kbdev)
 {
 	struct page *page;
 	dma_addr_t dma_addr;
@@ -140,10 +140,10 @@ int noinline kbase_gmc_page_decompress(phys_addr_t *p, struct kbase_device *kbde
 	flags = GFP_HIGHUSER | __GFP_ZERO;
 #endif
 	page = alloc_page(flags);
-        if (!page) {
-                pr_err("Unable to allocate a page for decompression.\n");
-                return -ENOMEM;
-        }
+	if (!page) {
+		pr_err("Unable to allocate a page for decompression.\n");
+		return -ENOMEM;
+	}
 	err = gmc_storage_get_page(kbdev->kbase_gmc_device.storage, page, handle);
 	if (err) {
 		pr_alert("%s: can't get page for handle: %p err: %d\n", __func__,
@@ -165,7 +165,7 @@ int noinline kbase_gmc_page_decompress(phys_addr_t *p, struct kbase_device *kbde
  *
  * Return: 0 if page was compressed or error code if something is wrong.
  */
-int noinline kbase_gmc_page_compress(phys_addr_t *p, struct kbase_device *kbdev)
+static int kbase_gmc_page_compress(phys_addr_t *p, struct kbase_device *kbdev)
 {
 	struct page *page;
 	struct gmc_storage_handle *handle;
