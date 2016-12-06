@@ -1,3 +1,31 @@
+/*
+ * Copyright 2016 Samsung Electronics Co., Ltd. All rights reserved.
+ *
+ * Authors:
+ * [ initial prototype implementation ]
+ *   Dmitry Safonov <0x7f454c46@gmail.com> (ex-employee)
+ * [ development of the current version ]
+ *   Alexander Yashchenko <a.yashchenko@samsung.com>
+ * [ small fixes ]
+ *   Sergei Rogachev <s.rogachev@samsung.com>
+ *
+ * This file is part of MALI Midgard Reclaimer for NATIVE memory
+ * allocations also known as "Midgard GMC" (graphical memory compression).
+ *
+ * "Midgard GMC" is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Foobar is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with "Midgard GMC".  If not, see <http://www.gnu.org/licenses/>.
+ */
+
 #define pr_fmt(fmt) "kbase-gmc: " fmt
 
 #include "mali_kbase_gmc.h"
