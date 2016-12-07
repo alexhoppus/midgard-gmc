@@ -1,3 +1,27 @@
+/*
+ * Copyright 2016 Samsung Electronics Co., Ltd. All rights reserved.
+ *
+ * Authors:
+ *   Sergei Rogachev <s.rogachev@samsung.com>
+ *   Alexander Yashchenko <a.yashchenko@samsung.com>
+ *
+ * Some ideas were got from a prototype made by Krzysztof Kozlowski.
+ *
+ * This file is part of GMC (graphical memory compression) framework.
+ *
+ * GMC is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * Midgard GMC is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with GMC. If not, see <http://www.gnu.org/licenses/>.
+ */
 #ifndef __GMC_STORAGE_H__
 #define __GMC_STORAGE_H__
 
